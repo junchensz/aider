@@ -202,6 +202,7 @@ print(my_function(3, 4))
                 os.path.join(temp_dir, test_file3),
             ]
             result = repo_map.get_repo_map([], other_files)
+            dump(result)
 
             # Check if the result contains the expected tags map with identifiers
             self.assertIn("test_file_with_identifiers.py", result)

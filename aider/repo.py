@@ -258,38 +258,47 @@ class GitRepo:
 
         return diffs
 
+    # 这个函数用于获取git仓库中被跟踪的文件列表。
     def get_tracked_files(self):
+        # 如果没有仓库，返回一个空列表。
         if not self.repo:
             return []
 
         try:
+            # 尝试从仓库的head获取当前提交。
             commit = self.repo.head.commit
         except ValueError:
+            # 如果出现ValueError，将commit设置为None。
             commit = None
         except ANY_GIT_ERROR as err:
+            # 处理任何git错误，记录错误并返回一个空列表。
             self.git_repo_error = err
-            self.io.tool_error(f"Unable to list files in git repo: {err}")
-            self.io.tool_output("Is your git repo corrupted?")
+            self.io.tool_error(f"无法列出git仓库中的文件: {err}")
+            self.io.tool_output("你的git仓库是否损坏？")
             return []
 
         files = set()
         if commit:
+            # 检查提交是否已在tree_files中缓存。
             if commit in self.tree_files:
                 files = self.tree_files[commit]
             else:
                 try:
+                    # 遍历提交树以收集文件路径。
                     for blob in commit.tree.traverse():
-                        if blob.type == "blob":  # blob is a file
+                        if blob.type == "blob":  # 检查blob是否为文件。
                             files.add(blob.path)
                 except ANY_GIT_ERROR as err:
+                    # 处理遍历期间的任何git错误。
                     self.git_repo_error = err
-                    self.io.tool_error(f"Unable to list files in git repo: {err}")
-                    self.io.tool_output("Is your git repo corrupted?")
+                    self.io.tool_error(f"无法列出git仓库中的文件: {err}")
+                    self.io.tool_output("你的git仓库是否损坏？")
                     return []
+                # 规范化文件路径并缓存它们。
                 files = set(self.normalize_path(path) for path in files)
                 self.tree_files[commit] = set(files)
 
-        # Add staged files
+        # 添加已暂存的文件。
         index = self.repo.index
         staged_files = [path for path, _ in index.entries.keys()]
         files.update(self.normalize_path(path) for path in staged_files)
@@ -297,7 +306,6 @@ class GitRepo:
         res = [fname for fname in files if not self.ignored_file(fname)]
 
         return res
-
     def normalize_path(self, path):
         orig_path = path
         res = self.normalized_path.get(orig_path)

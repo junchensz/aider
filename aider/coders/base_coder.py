@@ -610,6 +610,27 @@ class Coder:
         return matches
 
     def get_repo_map(self, force_refresh=False):
+        """
+        获取仓库映射。
+
+        该函数根据当前消息文本中提到的文件名和标识符，生成一个仓库映射。
+        如果仓库映射对象不存在，则直接返回。
+
+        参数:
+        - force_refresh (bool): 是否强制刷新仓库映射。
+
+        步骤:
+        1. 获取当前消息文本，并提取其中提到的文件名和标识符。
+        2. 更新提到的文件名集合，包含与标识符匹配的文件名。
+        3. 获取所有绝对路径的文件集合。
+        4. 计算只读文件和聊天文件的集合。
+        5. 调用仓库映射对象的 get_repo_map 方法，获取仓库内容。
+        6. 如果没有获取到仓库内容，尝试使用全局仓库映射。
+        7. 如果仍然没有获取到仓库内容，尝试使用完全无提示的仓库映射。
+
+        返回:
+        - repo_content: 仓库内容。
+        """
         if not self.repo_map:
             return
 
@@ -632,7 +653,7 @@ class Coder:
             force_refresh=force_refresh,
         )
 
-        # fall back to global repo map if files in chat are disjoint from rest of repo
+        # 如果聊天文件与仓库的其余部分不相交，则回退到全局仓库映射
         if not repo_content:
             repo_content = self.repo_map.get_repo_map(
                 set(),
@@ -641,7 +662,7 @@ class Coder:
                 mentioned_idents=mentioned_idents,
             )
 
-        # fall back to completely unhinted repo
+        # 回退到完全无提示的仓库
         if not repo_content:
             repo_content = self.repo_map.get_repo_map(
                 set(),
@@ -1187,44 +1208,84 @@ class Coder:
         return chunks
 
     def send_message(self, inp):
+        """发送消息给LLM并处理响应
+
+        Args:
+            inp: 用户输入的消息内容
+
+        Yields:
+            生成器,用于流式返回LLM的响应
+
+        主要步骤:
+        1. 记录事件并添加用户消息到对话历史
+        2. 格式化消息并预热缓存
+        3. 设置流式输出
+        4. 循环发送消息并处理各种异常情况:
+           - LiteLLM相关异常(重试、上下文超限等)
+           - 键盘中断
+           - 输出长度限制
+           - 其他异常
+        5. 处理响应内容:
+           - 显示使用情况报告
+           - 处理上下文耗尽错误
+           - 解析函数调用参数
+           - 检查文件引用
+        6. 应用更新:
+           - 更新对话历史
+           - 自动提交修改
+           - 运行代码检查
+           - 运行测试
+        """
+        # 记录消息发送开始事件
         self.event("message_send_starting")
 
+        # 添加用户消息到对话历史
         self.cur_messages += [
             dict(role="user", content=inp),
         ]
 
+        # 格式化消息并预热缓存
         chunks = self.format_messages()
         messages = chunks.all_messages()
         self.warm_cache(chunks)
 
+        # 在详细模式下显示消息
         if self.verbose:
             utils.show_messages(messages, functions=self.functions)
 
+        # 初始化响应内容和流式输出
         self.multi_response_content = ""
         if self.show_pretty() and self.stream:
             self.mdstream = self.io.get_assistant_mdstream()
         else:
             self.mdstream = None
 
+        # 设置重试延迟初始值
         retry_delay = 0.125
 
+        # 初始化LiteLLM异常处理
         litellm_ex = LiteLLMExceptions()
 
+        # 初始化状态变量
         self.usage_report = None
         exhausted = False
         interrupted = False
+
         try:
             while True:
                 try:
+                    # 发送消息并等待响应
                     yield from self.send(messages, functions=self.functions)
                     break
                 except litellm_ex.exceptions_tuple() as err:
+                    # 处理LiteLLM相关异常
                     ex_info = litellm_ex.get_ex_info(err)
 
                     if ex_info.name == "ContextWindowExceededError":
                         exhausted = True
                         break
 
+                    # 处理重试逻辑
                     should_retry = ex_info.retry
                     if should_retry:
                         retry_delay *= 2
@@ -1236,6 +1297,7 @@ class Coder:
                         self.check_and_open_urls(err, ex_info.description)
                         break
 
+                    # 显示错误信息
                     err_msg = str(err)
                     if ex_info.description:
                         self.io.tool_warning(err_msg)
@@ -1243,20 +1305,24 @@ class Coder:
                     else:
                         self.io.tool_error(err_msg)
 
+                    # 等待重试
                     self.io.tool_output(f"Retrying in {retry_delay:.1f} seconds...")
                     time.sleep(retry_delay)
                     continue
                 except KeyboardInterrupt:
+                    # 处理键盘中断
                     interrupted = True
                     break
                 except FinishReasonLength:
-                    # We hit the output limit!
+                    # 处理输出长度限制
                     if not self.main_model.info.get("supports_assistant_prefill"):
                         exhausted = True
                         break
 
+                    # 获取已生成的内容
                     self.multi_response_content = self.get_multi_response_content()
 
+                    # 更新消息历史
                     if messages[-1]["role"] == "assistant":
                         messages[-1]["content"] = self.multi_response_content
                     else:
@@ -1264,6 +1330,7 @@ class Coder:
                             dict(role="assistant", content=self.multi_response_content, prefix=True)
                         )
                 except Exception as err:
+                    # 处理其他异常
                     self.mdstream = None
                     lines = traceback.format_exception(type(err), err, err.__traceback__)
                     self.io.tool_warning("".join(lines))
@@ -1271,22 +1338,28 @@ class Coder:
                     self.event("message_send_exception", exception=str(err))
                     return
         finally:
+            # 清理流式输出
             if self.mdstream:
                 self.live_incremental_response(True)
                 self.mdstream = None
 
+            # 获取最终响应内容
             self.partial_response_content = self.get_multi_response_content(True)
             self.multi_response_content = ""
 
+        # 输出空行
         self.io.tool_output()
 
+        # 显示使用情况报告
         self.show_usage_report()
 
+        # 处理上下文耗尽错误
         if exhausted:
             self.show_exhausted_error()
             self.num_exhausted_context_windows += 1
             return
 
+        # 解析响应内容
         if self.partial_response_function_call:
             args = self.parse_partial_args()
             if args:
@@ -1298,7 +1371,9 @@ class Coder:
         else:
             content = ""
 
+        # 处理未中断的情况
         if not interrupted:
+            # 检查文件引用
             add_rel_files_message = self.check_for_file_mentions(content)
             if add_rel_files_message:
                 if self.reflected_message:
@@ -1307,32 +1382,42 @@ class Coder:
                     self.reflected_message = add_rel_files_message
                 return
 
+            # 完成响应处理
             try:
                 self.reply_completed()
             except KeyboardInterrupt:
                 interrupted = True
 
+        # 处理中断情况
         if interrupted:
             content += "\n^C KeyboardInterrupt"
             self.cur_messages += [dict(role="assistant", content=content)]
             return
 
+        # 应用更新
         edited = self.apply_updates()
 
+        # 更新对话历史
         self.update_cur_messages()
 
+        # 处理编辑后的操作
         if edited:
+            # 更新已编辑文件集合
             self.aider_edited_files.update(edited)
             saved_message = self.auto_commit(edited)
 
+            # 处理无仓库情况
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
                 saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo
 
+            # 移动对话历史
             self.move_back_cur_messages(saved_message)
 
+        # 检查是否有反馈消息
         if self.reflected_message:
             return
 
+        # 运行代码检查
         if edited and self.auto_lint:
             lint_errors = self.lint_edited(edited)
             self.auto_commit(edited, context="Ran the linter")
@@ -1344,6 +1429,7 @@ class Coder:
                     self.update_cur_messages()
                     return
 
+        # 运行shell命令
         shared_output = self.run_shell_commands()
         if shared_output:
             self.cur_messages += [
@@ -1351,6 +1437,7 @@ class Coder:
                 dict(role="assistant", content="Ok"),
             ]
 
+        # 运行测试
         if edited and self.auto_test:
             test_errors = self.commands.cmd_test(self.test_cmd)
             self.test_outcome = not test_errors
@@ -1360,7 +1447,6 @@ class Coder:
                     self.reflected_message = test_errors
                     self.update_cur_messages()
                     return
-
     def reply_completed(self):
         pass
 

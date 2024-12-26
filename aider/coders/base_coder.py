@@ -29,6 +29,7 @@ from aider.linter import Linter
 from aider.llm import litellm
 from aider.repo import ANY_GIT_ERROR, GitRepo
 from aider.repomap import RepoMap
+from aider.repomap_unit import RepoMap_Unit
 from aider.run_cmd import run_cmd
 from aider.sendchat import RETRY_TIMEOUT, send_completion
 from aider.utils import format_content, format_messages, format_tokens, is_image_file
@@ -283,6 +284,7 @@ class Coder:
         suggest_shell_commands=True,
         chat_language=None,
         detect_urls=True,
+        unit_mode=False,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -418,17 +420,30 @@ class Coder:
         has_map_prompt = hasattr(self, "gpt_prompts") and self.gpt_prompts.repo_content_prefix
 
         if use_repo_map and self.repo and has_map_prompt:
-            self.repo_map = RepoMap(
-                map_tokens,
-                self.root,
-                self.main_model,
-                io,
-                self.gpt_prompts.repo_content_prefix,
+            if unit_mode:
+                self.repo_map = RepoMap_Unit(
+                    map_tokens,
+                    self.root,
+                    self.main_model,
+                    io,
+                    self.gpt_prompts.repo_content_prefix,
                 self.verbose,
                 max_inp_tokens,
-                map_mul_no_files=map_mul_no_files,
-                refresh=map_refresh,
-            )
+                    map_mul_no_files=map_mul_no_files,
+                    refresh=map_refresh,
+                )
+            else:
+                self.repo_map = RepoMap(
+                    map_tokens,
+                    self.root,
+                    self.main_model,
+                    io,
+                    self.gpt_prompts.repo_content_prefix,
+                    self.verbose,
+                    max_inp_tokens,
+                    map_mul_no_files=map_mul_no_files,
+                    refresh=map_refresh,
+                )
 
         self.summarizer = summarizer or ChatSummary(
             [self.main_model.weak_model, self.main_model],

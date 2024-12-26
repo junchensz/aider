@@ -148,6 +148,23 @@ def collapse_repeats(s):
 
 
 def apply_hunk(content, hunk):
+    """
+    将补丁(hunk)应用到内容(content)上。
+    
+    Args:
+        content: 原始文本内容
+        hunk: 要应用的补丁
+        
+    Returns:
+        成功时返回修改后的内容,失败时返回None
+        
+    处理流程:
+    1. 先尝试直接应用补丁
+    2. 如果直接应用失败,则将补丁中的新行显式化处理
+    3. 将补丁按照操作类型(空格/非空格)分段
+    4. 对每个分段尝试部分应用补丁
+    5. 如果所有分段都应用成功则返回结果,否则返回None
+    """
     before_text, after_text = hunk_to_before_after(hunk)
 
     res = directly_apply_hunk(content, hunk)
@@ -159,7 +176,7 @@ def apply_hunk(content, hunk):
     # just consider space vs not-space
     ops = "".join([line[0] for line in hunk])
     ops = ops.replace("-", "x")
-    ops = ops.replace("+", "x")
+    ops = ops.replace("+", "x") 
     ops = ops.replace("\n", " ")
 
     cur_op = " "
@@ -195,7 +212,6 @@ def apply_hunk(content, hunk):
 
     if all_done:
         return content
-
 
 def flexi_just_search_and_replace(texts):
     strategies = [

@@ -6,7 +6,7 @@ import math
 from tqdm import tqdm
 from aider.special import filter_important_files
 
-class RepoMapUnit(RepoMap):
+class RepoMap_Unit(RepoMap):
     """
     A unit test version of RepoMap that inherits from the base RepoMap class.
     This class can be used for testing RepoMap functionality in isolation.

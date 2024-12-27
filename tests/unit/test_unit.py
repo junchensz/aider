@@ -8,7 +8,8 @@ if __name__ == "__main__":
     load_dotenv(dotenv_path="test.env")
     fnames = ["greeting.py"]
 
-    model = Model("openai/hf:deepseek-ai/DeepSeek-V2.5")
+    # model = Model("openai/hf:deepseek-ai/DeepSeek-V2.5")
+    model = Model("openai/deepseek-chat")
 
     # Create a coder object
     coder = Coder.create(main_model=model, fnames=fnames,suggest_shell_commands=False, unit_mode=True)

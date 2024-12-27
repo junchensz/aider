@@ -7,6 +7,7 @@ import tempfile
 from collections import OrderedDict
 from os.path import expanduser
 from pathlib import Path
+from unittest import mock
 
 import pyperclip
 from PIL import Image, ImageGrab
@@ -17,11 +18,12 @@ from aider import models, prompts, voice
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
 from aider.help import Help, install_help_extra
+from aider.io import InputOutput
 from aider.llm import litellm
 from aider.repo import ANY_GIT_ERROR
 from aider.run_cmd import run_cmd
 from aider.scrape import Scraper, install_playwright
-from aider.utils import is_image_file
+from aider.utils import GitTemporaryDirectory, is_image_file
 
 from .dump import dump  # noqa: F401
 
@@ -43,6 +45,8 @@ class Commands:
             verify_ssl=self.verify_ssl,
             args=self.args,
             parser=self.parser,
+            verbose=self.verbose,
+            editor=self.editor,
         )
 
     def __init__(
@@ -101,6 +105,13 @@ class Commands:
                 ("help", "Get help about using aider (usage, config, troubleshoot)."),
                 ("ask", "Ask questions about your code without making any changes."),
                 ("code", "Ask for changes to your code (using the best edit format)."),
+                (
+                    "architect",
+                    (
+                        "Work with an architect model to design code changes, and an editor to make"
+                        " them."
+                    ),
+                ),
             ]
         )
 
@@ -588,6 +599,10 @@ class Commands:
 
         self.io.tool_output(f"Diff since {commit_before_message[:7]}...")
 
+        if self.coder.pretty:
+            run_cmd(f"git diff {commit_before_message}")
+            return
+
         diff = self.coder.repo.diff_commits(
             self.coder.pretty,
             commit_before_message,
@@ -921,6 +936,9 @@ class Commands:
                 dict(role="assistant", content="Ok."),
             ]
 
+            if add and exit_status != 0:
+                self.io.placeholder = "Fix that"
+
     def cmd_exit(self, args):
         "Exit the application"
         self.coder.event("exit", reason="/exit")
@@ -993,7 +1011,7 @@ class Commands:
             return
 
         self.coder.event("interactive help")
-        from aider.coders import Coder
+        from aider.coders.base_coder import Coder
 
         if not self.help:
             res = install_help_extra(self.io)
@@ -1053,7 +1071,7 @@ class Commands:
             self.io.tool_error(f"Please provide a question or topic for the {edit_format} chat.")
             return
 
-        from aider.coders import Coder
+        from aider.coders.base_coder import Coder
 
         coder = Coder.create(
             io=self.io,
@@ -1109,36 +1127,14 @@ class Commands:
                 )
                 return
 
-        history_iter = self.io.get_input_history()
-
-        history = []
-        size = 0
-        for line in history_iter:
-            if line.startswith("/"):
-                continue
-            if line in history:
-                continue
-            if size + len(line) > 1024:
-                break
-            size += len(line)
-            history.append(line)
-
-        history.reverse()
-        history = "\n".join(history)
-
         try:
-            text = self.voice.record_and_transcribe(history, language=self.voice_language)
+            text = self.voice.record_and_transcribe(None, language=self.voice_language)
         except litellm.OpenAIError as err:
             self.io.tool_error(f"Unable to use OpenAI whisper model: {err}")
             return
 
         if text:
-            self.io.add_to_input_history(text)
-            self.io.print()
-            self.io.user_input(text, log_only=False)
-            self.io.print()
-
-        return text
+            self.io.placeholder = text
 
     def cmd_paste(self, args):
         """Paste image/text from the clipboard into the chat.\
@@ -1191,9 +1187,14 @@ class Commands:
             self.io.tool_error(f"Error processing clipboard content: {e}")
 
     def cmd_read_only(self, args):
-        "Add files to the chat that are for reference, not to be edited"
+        "Add files to the chat that are for reference only, or turn added files to read-only"
         if not args.strip():
-            self.io.tool_error("Please provide filenames or directories to read.")
+            # Convert all files in chat to read-only
+            for fname in list(self.coder.abs_fnames):
+                self.coder.abs_fnames.remove(fname)
+                self.coder.abs_read_only_fnames.add(fname)
+                rel_fname = self.coder.get_rel_fname(fname)
+                self.io.tool_output(f"Converted {rel_fname} to read-only")
             return
 
         filenames = parse_quoted_filenames(args)
@@ -1310,7 +1311,42 @@ class Commands:
                 continue
 
             self.io.tool_output(f"\nExecuting: {cmd}")
-            self.run(cmd)
+            try:
+                self.run(cmd)
+            except SwitchCoder:
+                self.io.tool_error(
+                    f"Command '{cmd}' is only supported in interactive mode, skipping."
+                )
+
+    def test_cmd_load_with_switch_coder(self):
+        with GitTemporaryDirectory() as repo_dir:
+            io = InputOutput(pretty=False, fancy_input=False, yes=True)
+            coder = Coder.create(self.GPT35, None, io)
+            commands = Commands(io, coder)
+
+            # Create a temporary file with commands
+            commands_file = Path(repo_dir) / "test_commands.txt"
+            commands_file.write_text("/ask Tell me about the code\n/model gpt-4\n")
+
+            # Mock run to raise SwitchCoder for /ask and /model
+            def mock_run(cmd):
+                if cmd.startswith(("/ask", "/model")):
+                    raise SwitchCoder()
+                return None
+
+            with mock.patch.object(commands, "run", side_effect=mock_run):
+                # Capture tool_error output
+                with mock.patch.object(io, "tool_error") as mock_tool_error:
+                    commands.cmd_load(str(commands_file))
+
+                    # Check that appropriate error messages were shown
+                    mock_tool_error.assert_any_call(
+                        "Command '/ask Tell me about the code' is only supported in interactive"
+                        " mode, skipping."
+                    )
+                    mock_tool_error.assert_any_call(
+                        "Command '/model gpt-4' is only supported in interactive mode, skipping."
+                    )
 
     def completions_raw_save(self, document, complete_event):
         return self.completions_raw_read_only(document, complete_event)
@@ -1341,6 +1377,10 @@ class Commands:
             self.io.tool_output(f"Saved commands to {args.strip()}")
         except Exception as e:
             self.io.tool_error(f"Error saving commands to file: {e}")
+
+    def cmd_multiline_mode(self, args):
+        "Toggle multiline mode (swaps behavior of Enter and Meta+Enter)"
+        self.io.toggle_multiline_mode()
 
     def cmd_copy(self, args):
         "Copy the last assistant message to the clipboard"
@@ -1389,6 +1429,50 @@ class Commands:
         user_input = pipe_editor(initial_content, suffix="md", editor=self.editor)
         if user_input.strip():
             self.io.set_placeholder(user_input.rstrip())
+
+    def cmd_copy_context(self, args=None):
+        """Copy the current chat context as markdown, suitable to paste into a web UI"""
+
+        chunks = self.coder.format_chat_chunks()
+
+        markdown = ""
+
+        # Only include specified chunks in order
+        for messages in [chunks.repo, chunks.readonly_files, chunks.chat_files]:
+            for msg in messages:
+                # Only include user messages
+                if msg["role"] != "user":
+                    continue
+
+                content = msg["content"]
+
+                # Handle image/multipart content
+                if isinstance(content, list):
+                    for part in content:
+                        if part.get("type") == "text":
+                            markdown += part["text"] + "\n\n"
+                else:
+                    markdown += content + "\n\n"
+
+        args = args or ""
+        markdown += f"""
+Just tell me how to edit the files to make the changes.
+Don't give me back entire files.
+Just show me the edits I need to make.
+
+{args}
+"""
+
+        try:
+            pyperclip.copy(markdown)
+            self.io.tool_output("Copied code context to clipboard.")
+        except pyperclip.PyperclipException as e:
+            self.io.tool_error(f"Failed to copy to clipboard: {str(e)}")
+            self.io.tool_output(
+                "You may need to install xclip or xsel on Linux, or pbcopy on macOS."
+            )
+        except Exception as e:
+            self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
 
 
 def expand_subdir(file_path):

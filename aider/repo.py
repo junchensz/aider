@@ -2,7 +2,17 @@ import os
 import time
 from pathlib import Path, PurePosixPath
 
-import git
+try:
+    import git
+
+    ANY_GIT_ERROR = [
+        git.exc.ODBError,
+        git.exc.GitError,
+    ]
+except ImportError:
+    git = None
+    ANY_GIT_ERROR = []
+
 import pathspec
 
 from aider import prompts, utils
@@ -10,15 +20,14 @@ from aider.sendchat import simple_send_with_retries
 
 from .dump import dump  # noqa: F401
 
-ANY_GIT_ERROR = (
-    git.exc.ODBError,
-    git.exc.GitError,
+ANY_GIT_ERROR += [
     OSError,
     IndexError,
     BufferError,
     TypeError,
     ValueError,
-)
+]
+ANY_GIT_ERROR = tuple(ANY_GIT_ERROR)
 
 
 class GitRepo:
@@ -192,9 +201,7 @@ class GitRepo:
             max_tokens = model.info.get("max_input_tokens") or 0
             if max_tokens and num_tokens > max_tokens:
                 continue
-            commit_message = simple_send_with_retries(
-                model.name, messages, extra_params=model.extra_params
-            )
+            commit_message = simple_send_with_retries(model, messages)
             if commit_message:
                 break
 

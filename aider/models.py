@@ -69,13 +69,14 @@ MODEL_ALIASES = {
     "opus": "claude-3-opus-20240229",
     # GPT models
     "4": "gpt-4-0613",
-    "4o": "gpt-4o-2024-08-06",
+    "4o": "gpt-4o",
     "4-turbo": "gpt-4-1106-preview",
     "35turbo": "gpt-3.5-turbo",
     "35-turbo": "gpt-3.5-turbo",
     "3": "gpt-3.5-turbo",
     # Other models
-    "deepseek": "deepseek/deepseek-coder",
+    "deepseek": "deepseek/deepseek-chat",
+    "flash": "gemini/gemini-2.0-flash-exp",
 }
 
 
@@ -584,6 +585,21 @@ MODEL_SETTINGS = [
         use_repo_map=True,
     ),
     ModelSettings(
+        "gemini/gemini-exp-1206",
+        "diff",
+        use_repo_map=True,
+    ),
+    ModelSettings(
+        "gemini/gemini-exp-1114",
+        "diff",
+        use_repo_map=True,
+    ),
+    ModelSettings(
+        "gemini/gemini-exp-1121",
+        "diff",
+        use_repo_map=True,
+    ),
+    ModelSettings(
         "vertex_ai/gemini-pro-experimental",
         "diff-fenced",
         use_repo_map=True,
@@ -592,6 +608,12 @@ MODEL_SETTINGS = [
         "gemini/gemini-1.5-flash-exp-0827",
         "whole",
         use_repo_map=False,
+        send_undo_reply=False,
+    ),
+    ModelSettings(
+        "gemini/gemini-2.0-flash-exp",
+        "diff",
+        use_repo_map=True,
         send_undo_reply=False,
     ),
     ModelSettings(
@@ -638,6 +660,13 @@ MODEL_SETTINGS = [
     ),
     ModelSettings(
         "openrouter/deepseek/deepseek-coder",
+        "diff",
+        use_repo_map=True,
+        examples_as_sys_msg=True,
+        reminder="sys",
+    ),
+    ModelSettings(
+        "openrouter/deepseek/deepseek-chat",
         "diff",
         use_repo_map=True,
         examples_as_sys_msg=True,
@@ -741,6 +770,39 @@ MODEL_SETTINGS = [
         use_system_prompt=False,
         use_temperature=False,
         streaming=False,
+    ),
+    ModelSettings(
+        "openrouter/openai/o1",
+        "diff",
+        weak_model_name="openrouter/openai/gpt-4o-mini",
+        editor_model_name="openrouter/openai/gpt-4o",
+        editor_edit_format="editor-diff",
+        use_repo_map=True,
+        streaming=False,
+        use_temperature=False,
+        # extra_params=dict(extra_body=dict(reasoning_effort="high")),
+    ),
+    ModelSettings(
+        "openai/o1",
+        "diff",
+        weak_model_name="openai/gpt-4o-mini",
+        editor_model_name="openai/gpt-4o",
+        editor_edit_format="editor-diff",
+        use_repo_map=True,
+        streaming=False,
+        use_temperature=False,
+        # extra_params=dict(extra_body=dict(reasoning_effort="high")),
+    ),
+    ModelSettings(
+        "o1",
+        "diff",
+        weak_model_name="gpt-4o-mini",
+        editor_model_name="gpt-4o",
+        editor_edit_format="editor-diff",
+        use_repo_map=True,
+        streaming=False,
+        use_temperature=False,
+        # extra_params=dict(extra_body=dict(reasoning_effort="high")),
     ),
     ModelSettings(
         "openrouter/qwen/qwen-2.5-coder-32b-instruct",
@@ -1210,10 +1272,10 @@ def sanity_check_model(io, model):
             status = "Set" if value else "Not set"
             io.tool_output(f"- {key}: {status}")
 
-        if platform.system() == "Windows" or True:
+        if platform.system() == "Windows":
             io.tool_output(
-                "If you just set these environment variables using `setx` you may need to restart"
-                " your terminal or command prompt for the changes to take effect."
+                "Note: You may need to restart your terminal or command prompt for `setx` to take"
+                " effect."
             )
 
     elif not model.keys_in_environment:

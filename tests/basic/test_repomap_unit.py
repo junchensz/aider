@@ -10,7 +10,7 @@ import git
 from aider.dump import dump  # noqa: F401
 from aider.io import InputOutput
 from aider.models import Model
-from aider.repomap_unit import RepoMapUnit
+from aider.repomap_unit import RepoMap_Unit
 from aider.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
 
 
@@ -23,7 +23,7 @@ class TestRepoMapUnit(unittest.TestCase):
         current_path = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.join(current_path, 'data')
         dump(data_path)
-        repo_map = RepoMapUnit(main_model=self.GPT35, root=data_path, io=io)
+        repo_map = RepoMap_Unit(main_model=self.GPT35, root=data_path, io=io)
 
         chat_files = [data_path+'/Person.java']
         other_files = [data_path+'/Address.java',
